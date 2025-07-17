@@ -1,0 +1,35 @@
+name: Branch Protection Check
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  enforce-conventions:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Check commit messages
+      run: |
+        echo "🔍 Checking commit message conventions..."
+        # Check if commits follow conventional commits
+        git log --oneline origin/main..HEAD | while read line; do
+          if [[ ! "$line" =~ ^[a-f0-9]+\ (feat|fix|docs|style|refactor|test|chore|perf|ci|build)(\(.+\))?:\ .+ ]]; then
+            echo "❌ Commit message does not follow conventional commits: $line"
+            exit 1
+          fi
+        done
+        echo "✅ All commit messages are properly formatted"
+    
+    - name: Check branch naming
+      run: |
+        BRANCH_NAME="${GITHUB_HEAD_REF}"
+        if [[ ! "$BRANCH_NAME" =~ ^(feature|bugfix|hotfix|release)\/[a-z0-9-]+$ ]]; then
+          echo "❌ Branch name '$BRANCH_NAME' does not follow naming conventions"
+          echo "Expected: feature/description, bugfix/description, hotfix/description, or release/version"
+          exit 1
+        fi
+        echo "✅ Branch name follows conventions"
