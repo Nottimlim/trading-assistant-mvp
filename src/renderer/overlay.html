@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Trading Intervention</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 40px;
+            background: rgba(244, 67, 54, 0.95);
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            text-align: center;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        p {
+            font-size: 1.2em;
+            line-height: 1.6;
+            margin-bottom: 30px;
+        }
+
+        .countdown {
+            font-size: 4em;
+            font-weight: bold;
+            margin: 30px 0;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        .button {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid white;
+            padding: 15px 30px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+
+        .button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+
+        .shake {
+            animation: shake 0.5s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body>
+    <div id="interventionContent">
+        <h1 class="shake">🚨 STOP TRADING!</h1>
+        <p id="interventionMessage">You have reached your daily trading limit!</p>
+        <div class="countdown" id="countdown">15:00</div>
+        <p>Take a deep breath, step away from the screen, and do something else for a while.</p>
+        <button class="button" onclick="acknowledgeIntervention()">I Understand - Start Timer</button>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+        
+        let countdownTimer;
+        let timeLeft = 15 * 60; // 15 minutes in seconds
+        
+        function acknowledgeIntervention() {
+            ipcRenderer.send('acknowledge-intervention');
+            startCountdown();
+            
+            // Update UI
+            document.querySelector('h1').textContent = '⏱️ TIMEOUT ACTIVE';
+            document.querySelector('h1').classList.remove('shake');
+            document.querySelector('button').style.display = 'none';
+        }
+        
+        function startCountdown() {
+            countdownTimer = setInterval(() => {
+                const minutes = Math.floor(timeLeft / 60);
+                const seconds = timeLeft % 60;
+                
+                document.getElementById('countdown').textContent = 
+                    `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                
+                if (timeLeft <= 0) {
+                    clearInterval(countdownTimer);
+                    window.close();
+                }
+                
+                timeLeft--;
+            }, 1000);
+        }
+        
+        // Listen for intervention data
+        ipcRenderer.on('show-intervention', (event, data) => {
+            document.getElementById('interventionMessage').textContent = data.message;
+            timeLeft = data.timeoutMinutes * 60;
+            
+            const minutes = Math.floor(timeLeft / 60);
+            const seconds = timeLeft % 60;
+            document.getElementById('countdown').textContent = 
+                `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        });
+    </script>
+</body>
+</html>
