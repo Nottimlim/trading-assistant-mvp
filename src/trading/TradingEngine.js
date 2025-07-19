@@ -1,7 +1,10 @@
+const Store = require('electron-store');
+
 class TradingEngine {
   constructor() {
-    this.tradingHistory = [];
-    this.currentSession = {
+    this.store = new Store({ encryptionKey: 'trading-mvp-secure-key' });  // Encrypted local storage for financial data security
+    this.tradingHistory = this.store.get('tradingHistory', []);
+    this.currentSession = this.store.get('currentSession', {
       startTime: Date.now(),
       startingBalance: 0,
       tradesCount: 0,
@@ -9,22 +12,21 @@ class TradingEngine {
       lastBalance: 0,
       lastEquity: 0,
       isActive: false
-    };
-    
-    this.rules = {
+    });
+    this.rules = this.store.get('rules', {
       maxTradesPerDay: 2,
       riskPercentage: 1.0,
       timeoutMinutes: 15,
       breakevenRule: 'none', // 'none', 'extra', 'reset'
       minTradeAmount: 50 // Minimum amount to consider a trade
-    };
-    
+    });
     this.consecutiveFailedDetections = 0;
     this.maxFailedDetections = 5;
   }
 
   updateRules(newRules) {
     this.rules = { ...this.rules, ...newRules };
+    this.store.set('rules', this.rules);
     console.log('📋 Trading rules updated:', this.rules);
   }
 
@@ -38,7 +40,7 @@ class TradingEngine {
       lastEquity: initialBalance,
       isActive: true
     };
-    
+    this.store.set('currentSession', this.currentSession);
     this.consecutiveFailedDetections = 0;
     console.log('🚀 Trading session started:', this.currentSession);
   }
@@ -61,11 +63,21 @@ class TradingEngine {
       this.currentSession.lastBalance = currentData.balance;
       this.currentSession.lastEquity = currentData.equity;
       this.currentSession.isActive = true;
+      this.store.set('currentSession', this.currentSession);
       return null;
     }
 
     const balanceChange = currentData.balance - this.currentSession.lastBalance;
     const riskAmount = (this.currentSession.startingBalance * this.rules.riskPercentage) / 100;
+    
+    // Ignore small changes if positions are open (market fluctuation vs. closed trade)
+    if (currentData.hasOpenPositions && Math.abs(balanceChange) < riskAmount * 0.5) {
+      console.log('📈 Market fluctuation detected (open positions) - no trade');
+      this.currentSession.lastBalance = currentData.balance;
+      this.currentSession.lastEquity = currentData.equity;
+      this.store.set('currentSession', this.currentSession);
+      return null;
+    }
     
     // Trade detected if balance changed by significant amount
     if (Math.abs(balanceChange) >= Math.max(this.rules.minTradeAmount, riskAmount * 0.5)) {
@@ -83,10 +95,12 @@ class TradingEngine {
       };
 
       this.tradingHistory.push(trade);
+      this.store.set('tradingHistory', this.tradingHistory);
       this.currentSession.tradesCount++;
       this.currentSession.totalProfit += balanceChange;
       this.currentSession.lastBalance = currentData.balance;
       this.currentSession.lastEquity = currentData.equity;
+      this.store.set('currentSession', this.currentSession);
 
       console.log(`🎯 Trade detected:`, trade);
       return trade;
@@ -95,6 +109,7 @@ class TradingEngine {
     // Update last values for smaller changes (market movement)
     this.currentSession.lastBalance = currentData.balance;
     this.currentSession.lastEquity = currentData.equity;
+    this.store.set('currentSession', this.currentSession);
     
     return null;
   }
@@ -107,9 +122,8 @@ class TradingEngine {
       return violations;
     }
     
-    // Check max trades per day
+    // Check max trades per day with breakeven handling
     if (this.currentSession.tradesCount >= this.rules.maxTradesPerDay) {
-      // Handle breakeven rule
       if (this.rules.breakevenRule === 'extra' && this.currentSession.totalProfit >= 0) {
         if (this.currentSession.tradesCount > this.rules.maxTradesPerDay) {
           violations.push({
@@ -123,6 +137,7 @@ class TradingEngine {
       } else if (this.rules.breakevenRule === 'reset' && this.currentSession.totalProfit >= 0) {
         // Reset counter for breakeven
         this.currentSession.tradesCount = 0;
+        this.store.set('currentSession', this.currentSession);
         console.log('🔄 Trade counter reset due to breakeven rule');
       } else {
         violations.push({
@@ -211,6 +226,7 @@ class TradingEngine {
 
   resetSession() {
     this.tradingHistory = [];
+    this.store.set('tradingHistory', this.tradingHistory);
     this.currentSession = {
       startTime: Date.now(),
       startingBalance: 0,
@@ -220,7 +236,7 @@ class TradingEngine {
       lastEquity: 0,
       isActive: false
     };
-    
+    this.store.set('currentSession', this.currentSession);
     this.consecutiveFailedDetections = 0;
     console.log('🔄 Trading session reset');
   }
