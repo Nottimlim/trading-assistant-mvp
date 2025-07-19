@@ -9,7 +9,7 @@ class MatchTraderOCR {
     this.isInitialized = false;
     this.screenDimensions = { width: 1920, height: 1080 }; // Default dimensions
     
-    // Precise regions based on MatchTrader screenshot - targeting actual numbers
+    // Precise regions based on your MatchTrader screenshot - targeting the actual numbers
     this.baseRegions = {
       balance: { x: 396, y: 115, width: 100, height: 25 },      // "93 905.13 USD"
       equity: { x: 536, y: 115, width: 100, height: 25 },       // "93 905.13 USD"  
@@ -52,25 +52,30 @@ class MatchTraderOCR {
       console.log('✅ OCR engine initialized successfully');
     } catch (error) {
       console.error('❌ OCR initialization failed:', error);
-      throw new Error('OCR engine initialization failed - check Tesseract installation and dependencies');
+      throw error;
     }
   }
 
+  // Fixed auto-calibrate using Jimp instead of browser Image API
   async autoCalibrate(screenshotBuffer) {
     try {
       console.log('🎯 Auto-calibrating OCR regions...');
       
+      // Use Jimp to get image dimensions (works in Node.js)
       const image = await Jimp.read(screenshotBuffer);
       const capturedWidth = image.getWidth();
       const capturedHeight = image.getHeight();
       
       console.log(`📐 Captured dimensions: ${capturedWidth}x${capturedHeight}`);
       
+      // Update screen dimensions
       this.screenDimensions = { width: capturedWidth, height: capturedHeight };
       
+      // Calculate scaling factors based on common screen sizes
       let baseWidth = 1920;
       let baseHeight = 1080;
       
+      // Adjust base dimensions for common Mac screen sizes
       if (capturedWidth <= 1440) {
         baseWidth = 1440;
         baseHeight = 900;
@@ -84,6 +89,7 @@ class MatchTraderOCR {
       
       console.log(`📏 Scale factors: X=${scaleX.toFixed(3)}, Y=${scaleY.toFixed(3)} (base: ${baseWidth}x${baseHeight})`);
       
+      // Scale all regions
       this.regions = {};
       for (const [regionName, baseRegion] of Object.entries(this.baseRegions)) {
         this.regions[regionName] = {
@@ -109,25 +115,28 @@ class MatchTraderOCR {
     try {
       const debugPath = path.join(__dirname, '..', '..', 'debug', filename);
       
+      // Create debug directory if it doesn't exist
       const debugDir = path.dirname(debugPath);
       if (!fs.existsSync(debugDir)) {
         fs.mkdirSync(debugDir, { recursive: true });
       }
       
-      await fs.writeFile(debugPath, screenshotBuffer);
+      fs.writeFileSync(debugPath, screenshotBuffer);
       console.log(`📸 Debug screenshot saved: ${debugPath}`);
       
+      // Also save cropped regions for analysis
       for (const [regionName, region] of Object.entries(this.regions)) {
         try {
           const croppedImage = await this.preprocessImageWithJimp(screenshotBuffer, region);
           const croppedPath = path.join(debugDir, `${regionName}_cropped.png`);
-          await fs.writeFile(croppedPath, croppedImage);
+          fs.writeFileSync(croppedPath, croppedImage);
           console.log(`📸 Cropped region saved: ${croppedPath}`);
         } catch (error) {
           console.error(`Failed to save cropped region ${regionName}:`, error);
         }
       }
       
+      // Save region overlay visualization
       await this.saveRegionOverlay(screenshotBuffer, debugDir);
       
       return debugPath;
@@ -141,6 +150,7 @@ class MatchTraderOCR {
     try {
       const image = await Jimp.read(screenshotBuffer);
       
+      // Draw rectangles around each region
       const colors = {
         balance: 0xFF0000FF,     // Red
         equity: 0x00FF00FF,      // Green
@@ -154,18 +164,31 @@ class MatchTraderOCR {
       for (const [regionName, region] of Object.entries(this.regions)) {
         const color = colors[regionName] || 0xFFFFFFFF;
         
+        // Draw rectangle border (3 pixels thick)
         for (let i = 0; i < 3; i++) {
+          // Top border
           for (let x = region.x; x < region.x + region.width && x < image.getWidth(); x++) {
-            if (region.y + i < image.getHeight()) image.setPixelColor(color, x, region.y + i);
+            if (region.y + i < image.getHeight()) {
+              image.setPixelColor(color, x, region.y + i);
+            }
           }
+          // Bottom border
           for (let x = region.x; x < region.x + region.width && x < image.getWidth(); x++) {
-            if (region.y + region.height - 1 - i >= 0 && region.y + region.height - 1 - i < image.getHeight()) image.setPixelColor(color, x, region.y + region.height - 1 - i);
+            if (region.y + region.height - 1 - i >= 0 && region.y + region.height - 1 - i < image.getHeight()) {
+              image.setPixelColor(color, x, region.y + region.height - 1 - i);
+            }
           }
+          // Left border
           for (let y = region.y; y < region.y + region.height && y < image.getHeight(); y++) {
-            if (region.x + i < image.getWidth()) image.setPixelColor(color, region.x + i, y);
+            if (region.x + i < image.getWidth()) {
+              image.setPixelColor(color, region.x + i, y);
+            }
           }
+          // Right border
           for (let y = region.y; y < region.y + region.height && y < image.getHeight(); y++) {
-            if (region.x + region.width - 1 - i >= 0 && region.x + region.width - 1 - i < image.getWidth()) image.setPixelColor(color, region.x + region.width - 1 - i, y);
+            if (region.x + region.width - 1 - i >= 0 && region.x + region.width - 1 - i < image.getWidth()) {
+              image.setPixelColor(color, region.x + region.width - 1 - i, y);
+            }
           }
         }
       }
@@ -181,8 +204,10 @@ class MatchTraderOCR {
 
   async preprocessImageWithJimp(imageBuffer, region) {
     try {
+      // Load image with Jimp
       const image = await Jimp.read(imageBuffer);
       
+      // Validate region boundaries
       const maxX = Math.min(region.x + region.width, image.getWidth());
       const maxY = Math.min(region.y + region.height, image.getHeight());
       const validX = Math.max(0, region.x);
@@ -194,25 +219,28 @@ class MatchTraderOCR {
         throw new Error(`Invalid region: ${JSON.stringify(region)}`);
       }
       
-      let cropped = image.crop(validX, validY, validWidth, validHeight);
+      // Crop to region
+      const cropped = image.crop(validX, validY, validWidth, validHeight);
       
-      cropped = cropped.grayscale();
+      // Convert to grayscale
+      cropped.greyscale();
       
-      cropped = cropped.contrast(0.5);
+      // Increase contrast
+      cropped.contrast(0.5);
       
-      cropped = cropped.scale(3);
+      // Scale up for better OCR (3x)
+      cropped.scale(3);
       
-      // Adaptive threshold for light/dark contrast
-      const histogram = cropped.histogram();
-      const otsuThreshold = Jimp.autoThreshold(histogram);
-      cropped = cropped.threshold({ max: otsuThreshold });
+      // Apply threshold for better text recognition
+      cropped.threshold({ max: 128 });
       
+      // Convert back to buffer
       const processedBuffer = await cropped.getBufferAsync(Jimp.MIME_PNG);
       
       return processedBuffer;
     } catch (error) {
       console.error('Image preprocessing failed:', error);
-      return imageBuffer; // Fallback to original on error
+      return imageBuffer;
     }
   }
 
@@ -222,22 +250,23 @@ class MatchTraderOCR {
       
       const { data: { text, confidence } } = await this.worker.recognize(processedImage);
       
+      // Clean and parse the text - handle "93 905.13 USD" format
       let cleanText = text.replace(/USD|%/g, '').trim(); // Remove currency symbols
       
+      // Handle space-separated thousands (European format): "93 905.13" → "93905.13"
       if (cleanText.includes(' ') && !cleanText.includes(',')) {
+        // Replace spaces in numbers like "93 905.13"
         cleanText = cleanText.replace(/\s+/g, '');
       }
       
+      // Handle comma thousands separators
       if (cleanText.includes(',')) {
         cleanText = cleanText.replace(/,/g, '');
       }
       
       let value = 0;
-      const minConfidence = this.debugMode ? 15 : 70; // Lower in dev for testing
-      if (cleanText && confidence > minConfidence) {
+      if (cleanText && confidence > 15) { // Even lower threshold for initial testing
         value = parseFloat(cleanText) || 0;
-      } else {
-        console.warn(`Low confidence (${confidence}%) for ${fieldName} - using fallback 0`);
       }
       
       console.log(`📊 ${fieldName}: "${text.trim()}" → ${value} (confidence: ${confidence.toFixed(1)}%) [region: ${JSON.stringify(region)}]`);
@@ -257,39 +286,43 @@ class MatchTraderOCR {
     try {
       console.log('🔍 Extracting trading data from MatchTrader...');
       
+      // Auto-calibrate on first run
       await this.autoCalibrate(screenshotBuffer);
       
+      // Save debug screenshot if in debug mode
       if (this.debugMode) {
         await this.debugSaveScreenshot(screenshotBuffer);
       }
       
+      // Extract all values in parallel
       const results = await Promise.allSettled([
         this.extractFinancialValue(screenshotBuffer, this.regions.balance, 'Balance'),
         this.extractFinancialValue(screenshotBuffer, this.regions.equity, 'Equity'),
-        this.extractFinancialValue(screenshotBuffer, this.regions.freeMargin, 'Free Margin'),
-        this.extractFinancialValue(screenshotBuffer, this.regions.margin, 'Margin'),
-        this.extractFinancialValue(screenshotBuffer, this.regions.marginLevel, 'Margin Level'),
         this.extractFinancialValue(screenshotBuffer, this.regions.profit, 'Profit'),
-        this.detectOpenPositions(screenshotBuffer)
+        this.extractFinancialValue(screenshotBuffer, this.regions.margin, 'Margin'),
+        this.extractFinancialValue(screenshotBuffer, this.regions.freeMargin, 'Free Margin'),
+        this.extractFinancialValue(screenshotBuffer, this.regions.marginLevel, 'Margin Level')
       ]);
 
       const tradingData = {
         balance: results[0].status === 'fulfilled' ? results[0].value : 0,
         equity: results[1].status === 'fulfilled' ? results[1].value : 0,
-        freeMargin: results[2].status === 'fulfilled' ? results[2].value : 0,
+        profit: results[2].status === 'fulfilled' ? results[2].value : 0,
         margin: results[3].status === 'fulfilled' ? results[3].value : 0,
-        marginLevel: results[4].status === 'fulfilled' ? results[4].value : 0,
-        profit: results[5].status === 'fulfilled' ? results[5].value : 0,
-        hasOpenPositions: results[6].status === 'fulfilled' ? results[6].value.hasOpenPositions : false,
+        freeMargin: results[4].status === 'fulfilled' ? results[4].value : 0,
+        marginLevel: results[5].status === 'fulfilled' ? results[5].value : 0,
         timestamp: Date.now()
       };
 
-      if (tradingData.balance > 1000) { // Reasonable trading account balance threshold
+      // Check if we got reasonable values
+      if (tradingData.balance > 1000) { // Reasonable trading account balance
         this.lastValues = { ...tradingData };
         console.log('✅ OCR extraction successful:', tradingData);
         return tradingData;
       } else {
         console.warn(`⚠️ OCR extraction may have failed - balance: ${tradingData.balance}`);
+        
+        // Return last known good values with updated timestamp
         return {
           ...this.lastValues,
           timestamp: Date.now(),
@@ -306,7 +339,6 @@ class MatchTraderOCR {
         margin: 0,
         freeMargin: 0,
         marginLevel: 0,
-        hasOpenPositions: false,
         timestamp: Date.now(),
         error: error.message
       };
@@ -328,7 +360,8 @@ class MatchTraderOCR {
       return {
         hasOpenPositions: hasPositions,
         positionsText: text.trim(),
-        confidence: confidence
+        confidence: confidence,
+        timestamp: Date.now()
       };
       
     } catch (error) {
@@ -336,11 +369,14 @@ class MatchTraderOCR {
       return {
         hasOpenPositions: false,
         positionsText: '',
-        confidence: 0
+        confidence: 0,
+        timestamp: Date.now(),
+        error: error.message
       };
     }
   }
 
+  // Calibrate OCR regions based on user's screen setup
   async calibrateRegions(screenshotBuffer, userDefinedRegions) {
     console.log('🎯 Calibrating OCR regions...');
     
@@ -348,6 +384,7 @@ class MatchTraderOCR {
       this.regions = { ...this.regions, ...userDefinedRegions };
     }
     
+    // Test extraction with current regions
     const testResults = await this.extractTradingData(screenshotBuffer);
     
     console.log('✅ Region calibration test results:', testResults);

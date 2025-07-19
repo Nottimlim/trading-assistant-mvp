@@ -1,14 +1,20 @@
-const { app, BrowserWindow, ipcMain, screen, globalShortcut, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, desktopCapturer, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const MatchTraderOCR = require('./ocr/MatchTraderOCR');
 const TradingEngine = require('./trading/TradingEngine');
+const Store = require('electron-store');
 
 class TradingAssistant {
   constructor() {
+    this.store = new Store({ encryptionKey: 'trading-discipline-key' });  // Secure local persistence
     this.mainWindow = null;
     this.overlayWindow = null;
+    this.settingsWindow = null;
+    this.lockoutOverlay = null;  // New: Red lockout overlay
+    this.tray = null;
     this.isMonitoring = false;
-    this.isInvisibleMode = false;  // New: Toggle for hidden dashboard
+    this.isLocked = this.store.get('isLocked', false);
+    this.lockEndTime = this.store.get('lockEndTime', 0);
     this.ocrEngine = new MatchTraderOCR();
     this.tradingEngine = new TradingEngine();
     this.monitoringInterval = null;
@@ -22,41 +28,40 @@ class TradingAssistant {
       lastBalance: 0
     };
     
-    this.rules = {
+    this.rules = this.store.get('rules', {
       maxTrades: 2,
       riskPercent: 1,
       timeoutMinutes: 15
-    };
+    });
   }
 
   async createMainWindow() {
     this.mainWindow = new BrowserWindow({
-      width: 300,  // Smaller for floating overlay
-      height: 200,
-      frame: false,  // Frameless for clean overlay
-      transparent: true,  // Enable transparency for glassmorphism
-      alwaysOnTop: true,  // Float above all apps 
-      resizable: false,  // Fixed size for minimal UI
+      width: 250,
+      height: 280,  // Increased for button/log visibility
+      x: screen.getPrimaryDisplay().workAreaSize.width - 270,
+      y: 20,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      resizable: false,
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,
         enableRemoteModule: true
       },
-      vibrancy: 'dark'  // macOS vibrancy for subtle blur
+      vibrancy: 'dark'
     });
 
     await this.mainWindow.loadFile('src/renderer/index.html');
     
-    this.mainWindow.setIgnoreMouseEvents(true);  // Click-through for unobtrusive mode
+    this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
     
     if (process.argv.includes('--dev')) {
-      this.mainWindow.webContents.openDevTools({ mode: 'detach' });
+      this.mainWindow.webContents.openDevTools();
     }
 
-    // Handle window closed
-    this.mainWindow.on('closed', () => {
-      this.cleanup();
-    });
+    this.mainWindow.on('closed', () => this.mainWindow = null);
   }
 
   createOverlayWindow() {
@@ -75,7 +80,74 @@ class TradingAssistant {
     });
 
     this.overlayWindow.loadFile('src/renderer/overlay.html');
-    this.overlayWindow.setIgnoreMouseEvents(false);  // Interactive for acknowledgments
+    this.overlayWindow.setIgnoreMouseEvents(false);
+  }
+
+  createSettingsWindow() {
+    this.settingsWindow = new BrowserWindow({
+      width: 300,
+      height: 250,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+      }
+    });
+
+    this.settingsWindow.loadFile('src/renderer/settings.html');
+    this.settingsWindow.webContents.on('did-finish-load', () => {
+      this.settingsWindow.webContents.send('load-rules', this.rules);  // Send persisted rules
+    });
+    this.settingsWindow.on('closed', () => this.settingsWindow = null);
+  }
+
+  createTray() {
+    try {
+      // Try custom icon if exists
+      this.tray = new Tray(path.join(__dirname, 'icon.png'));
+    } catch (error) {
+      console.warn('Custom icon not found - using fallback placeholder');
+      // Fallback: Code-generated simple circle icon
+      const buffer = Buffer.from(
+        `<svg width="16" height="16" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" fill="#4CAF50" stroke="#FFFFFF" stroke-width="1"/></svg>`,
+        'utf-8'
+      );
+      const image = nativeImage.createFromBuffer(buffer, { width: 16, height: 16 });
+      this.tray = new Tray(image);
+    }
+    
+    const menu = Menu.buildFromTemplate([
+      { label: 'Account', click: () => console.log('Account placeholder') },
+      { label: 'Contact', click: () => console.log('Contact placeholder') },
+      { label: 'Settings', click: () => {
+        if (!this.settingsWindow) this.createSettingsWindow();
+        this.settingsWindow.show();
+      } },
+      { label: 'Quit', click: () => app.quit() }
+    ]);
+    this.tray.setToolTip('Trading Discipline Tool');
+    this.tray.setContextMenu(menu);
+  }
+
+  createLockoutOverlay() {
+    this.lockoutOverlay = new BrowserWindow({
+      width: 800,  // Initial size; will track browser
+      height: 600,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+      }
+    });
+
+    this.lockoutOverlay.loadFile('src/renderer/lockout.html');
+    this.lockoutOverlay.setIgnoreMouseEvents(true, { forward: true });  // Click-through but visible
+    this.lockoutOverlay.on('closed', () => this.lockoutOverlay = null);
   }
 
   async startScreenMonitoring() {
@@ -86,15 +158,6 @@ class TradingAssistant {
     
     try {
       await this.ocrEngine.initialize();
-      
-      const initialData = await this.captureAndAnalyze();
-      if (initialData && initialData.balance > 0) {
-        this.tradingEngine.startSession(initialData.balance);
-        
-        this.tradingData.balance = initialData.balance;
-        this.tradingData.equity = initialData.equity;
-        this.tradingData.lastBalance = initialData.balance;
-      }
       
       this.monitoringInterval = setInterval(async () => {
         if (this.isMonitoring) {
@@ -139,7 +202,6 @@ class TradingAssistant {
       this.tradingData.equity = tradingData.equity;
       this.tradingData.profit = tradingData.profit;
 
-      // Pass full tradingData (incl. hasOpenPositions) to detectTrade
       const detectedTrade = this.tradingEngine.detectTrade(tradingData);
       
       if (detectedTrade) {
@@ -176,7 +238,10 @@ class TradingAssistant {
     try {
       const sources = await desktopCapturer.getSources({
         types: ['screen', 'window'],
-        thumbnailSize: { width: 1920, height: 1080 }
+        thumbnailSize: {
+          width: 1920,
+          height: 1080
+        }
       });
       
       const matchTraderSource = sources.find(source => 
@@ -204,7 +269,20 @@ class TradingAssistant {
     }
   }
 
-  // Legacy methods preserved...
+  // Legacy method for backward compatibility
+  async extractTradingData(screenshot) {
+    return await this.ocrEngine.extractTradingData(screenshot);
+  }
+
+  // Legacy method for backward compatibility
+  detectTrades(newData) {
+    return this.tradingEngine.detectTrade(newData);
+  }
+
+  // Legacy method for backward compatibility
+  checkRuleViolations() {
+    return this.tradingEngine.checkRuleViolations();
+  }
 
   handleRuleViolations(violations) {
     const criticalViolations = violations.filter(v => v.severity === 'critical');
@@ -217,15 +295,19 @@ class TradingAssistant {
   triggerIntervention(violation) {
     console.log('🚨 INTERVENTION TRIGGERED:', violation.message);
     
+    // Stop monitoring temporarily
     this.isMonitoring = false;
     
+    // Show overlay
     this.showInterventionOverlay(violation);
     
+    // Send to main window
     this.mainWindow.webContents.send('intervention-triggered', violation);
   }
 
   showInterventionOverlay(violation) {
     if (this.overlayWindow) {
+      // Center on screen
       const { width, height } = screen.getPrimaryDisplay().workAreaSize;
       this.overlayWindow.setPosition(
         Math.floor((width - 500) / 2),
@@ -235,6 +317,7 @@ class TradingAssistant {
       this.overlayWindow.show();
       this.overlayWindow.focus();
       
+      // Send intervention data
       this.overlayWindow.webContents.send('show-intervention', {
         message: violation ? violation.message : `You've reached your ${this.rules.maxTrades} trade limit!`,
         type: violation ? violation.type : 'daily_limit_exceeded',
@@ -246,13 +329,93 @@ class TradingAssistant {
   }
 
   setupIPC() {
-    // Existing handlers...
+    // Handle messages from renderer process
+    ipcMain.on('start-monitoring', async () => {
+      await this.startScreenMonitoring();
+    });
+
+    ipcMain.on('stop-monitoring', () => {
+      this.stopScreenMonitoring();
+    });
+
+    ipcMain.on('update-rules', (event, newRules) => {
+      // Update both legacy and new structures
+      this.rules = { ...this.rules, ...newRules };
+      
+      // Map to new engine format
+      const engineRules = {
+        maxTradesPerDay: newRules.maxTrades || this.rules.maxTrades,
+        riskPercentage: newRules.riskPercent || this.rules.riskPercent,
+        timeoutMinutes: newRules.timeoutMinutes || this.rules.timeoutMinutes
+      };
+      
+      this.tradingEngine.updateRules(engineRules);
+    });
+
+    ipcMain.on('reset-trades', () => {
+      this.tradingData.tradesCount = 0;
+      this.tradingEngine.resetSession();
+    });
+
+    ipcMain.on('acknowledge-intervention', () => {
+      this.overlayWindow.hide();
+      this.startTimeoutPeriod();
+    });
+
+    // New IPC handlers for enhanced functionality
+    ipcMain.on('test-screenshot', async () => {
+      const screenshot = await this.captureMatchTraderWindow();
+      if (screenshot) {
+        const tradingData = await this.ocrEngine.extractTradingData(screenshot);
+        this.mainWindow.webContents.send('test-results', tradingData);
+      }
+    });
+
+    ipcMain.on('reset-session', () => {
+      this.tradingEngine.resetSession();
+      this.tradingData.tradesCount = 0;
+    });
+
+    ipcMain.on('calibrate-ocr', async (event, regions) => {
+      if (this.lastScreenshot) {
+        const results = await this.ocrEngine.calibrateRegions(this.lastScreenshot, regions);
+        event.reply('calibration-results', results);
+      }
+    });
     
-    // New: Toggle invisible mode for dashboard overlay
-    ipcMain.on('toggle-invisible-mode', (event, isInvisible) => {
-      this.isInvisibleMode = isInvisible;
-      this.mainWindow.setOpacity(isInvisible ? 0 : 1);
-      console.log(`👻 Invisible mode: ${isInvisible ? 'enabled' : 'disabled'}`);
+    ipcMain.on('close-settings', () => {
+      if (this.settingsWindow) this.settingsWindow.close();
+    });
+    
+    ipcMain.on('toggle-overlay', () => {
+      if (this.mainWindow.isVisible()) {
+        this.mainWindow.hide();
+      } else {
+        this.mainWindow.show();
+      }
+    });
+    
+    ipcMain.on('start-session', (event, startingBalance) => {
+      if (startingBalance > 0) {
+        this.tradingEngine.startSession(startingBalance);
+        console.log('🚀 Manual session started with balance:', startingBalance);
+        this.mainWindow.webContents.send('session-started', startingBalance);
+      } else {
+        console.warn('⚠️ Invalid starting balance');
+      }
+    });
+    
+    ipcMain.on('enable-interaction', () => {
+      this.mainWindow.setIgnoreMouseEvents(false);
+    });
+    
+    ipcMain.on('disable-interaction', () => {
+      this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
+    });
+    
+    ipcMain.on('open-settings', () => {
+      if (!this.settingsWindow) this.createSettingsWindow();
+      this.settingsWindow.show();
     });
   }
 
@@ -265,7 +428,6 @@ class TradingAssistant {
     setTimeout(() => {
       console.log('✅ Timeout period ended - monitoring can resume');
       this.mainWindow.webContents.send('timeout-ended');
-      this.overlayWindow.hide();  // Auto-hide after timeout
     }, timeoutMs);
   }
 
@@ -274,24 +436,53 @@ class TradingAssistant {
     if (this.ocrEngine) {
       await this.ocrEngine.cleanup();
     }
+    if (this.tray) this.tray.destroy();
   }
 }
 
-// App lifecycle (unchanged, but ensure mainWindow is created as overlay)
+// App lifecycle
 const tradingAssistant = new TradingAssistant();
 
 app.whenReady().then(async () => {
   await tradingAssistant.createMainWindow();
   tradingAssistant.createOverlayWindow();
+  tradingAssistant.createTray();
   tradingAssistant.setupIPC();
 
-  // Global shortcuts (unchanged)
+  // Global shortcuts
+  globalShortcut.register('CommandOrControl+Shift+T', () => {
+    if (tradingAssistant.isMonitoring) {
+      tradingAssistant.stopScreenMonitoring();
+      console.log('Monitoring paused');
+    } else {
+      tradingAssistant.startScreenMonitoring();
+      console.log('Monitoring started');
+    }
+  });
+
+  // Quick screenshot test shortcut
+  globalShortcut.register('CommandOrControl+Shift+S', async () => {
+    console.log('📸 Taking quick screenshot test...');
+    const screenshot = await tradingAssistant.captureMatchTraderWindow();
+    if (screenshot) {
+      const tradingData = await tradingAssistant.ocrEngine.extractTradingData(screenshot);
+      console.log('📊 Quick test results:', tradingData);
+    }
+  });
+  
+  // Cmd+T to toggle overlay visibility
+  globalShortcut.register('CommandOrControl+T', () => {
+    if (tradingAssistant.mainWindow.isVisible()) {
+      tradingAssistant.mainWindow.hide();
+    } else {
+      tradingAssistant.mainWindow.show();
+    }
+    console.log('Overlay toggled');
+  });
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  // Don't quit on macOS (tray persists)
 });
 
 app.on('activate', async () => {
