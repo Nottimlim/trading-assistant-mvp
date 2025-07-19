@@ -13,7 +13,6 @@
     "lint:fix": "eslint src/ --ext .js --fix",
     "format": "prettier --write \"src/**/*.{js,html,css}\"",
     "test": "echo \"Tests not implemented yet\" && exit 0",
-    "release": "electron-builder --publish=always",
     "postinstall": "electron-builder install-app-deps",
     "clean": "rm -rf dist/ node_modules/.cache"
   },
@@ -27,54 +26,23 @@
       "category": "public.app-category.finance",
       "entitlements": "build/entitlements.mac.plist",
       "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "icon": "build/icon.icns"
-    },
-    "dmg": {
-      "contents": [
-        {
-          "x": 130,
-          "y": 220
-        },
-        {
-          "x": 410,
-          "y": 220,
-          "type": "link",
-          "path": "/Applications"
-        }
-      ]
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "nottimlim",
-      "repo": "trading-assistant-mvp"
+      "gatekeeperAssess": false
     }
   },
   "dependencies": {
     "electron": "^28.0.0",
-    "tesseract.js": "^5.0.0"
+    "tesseract.js": "^5.0.0",
+    "sharp": "^0.32.0",
+    "jimp": "^0.22.0"
   },
   "devDependencies": {
-    "electron-builder": "^24.0.0",
-    "eslint": "^8.0.0",
-    "prettier": "^3.0.0"
+    "electron-builder": "^24.0.0"
   },
-  "keywords": [
-    "trading",
-    "discipline",
-    "automation",
-    "finance",
-    "electron",
-    "macos"
-  ],
+  "keywords": ["trading", "discipline", "automation", "finance", "electron", "macos"],
   "author": "nottimlim",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/nottimlim/trading-assistant-mvp.git"
-  },
-  "bugs": {
-    "url": "https://github.com/nottimlim/trading-assistant-mvp/issues"
-  },
-  "homepage": "https://github.com/nottimlim/trading-assistant-mvp#readme"
+  }
 }
