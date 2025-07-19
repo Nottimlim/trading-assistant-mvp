@@ -5,9 +5,9 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "NODE_ENV=development electron . --dev",
+    "dev": "NODE_ENV=development electron . --inspect",
     "build": "electron-builder",
-    "build-mac": "electron-builder --mac",
+    "build-mac": "electron-builder --mac --universal",
     "pack": "electron-builder --dir",
     "lint": "eslint src/ --ext .js",
     "lint:fix": "eslint src/ --ext .js --fix",
@@ -31,14 +31,22 @@
   },
   "dependencies": {
     "electron": "^28.0.0",
-    "tesseract.js": "^5.0.0",
+    "electron-store": "^10.1.0",
+    "jimp": "^0.22.0",
     "sharp": "^0.32.0",
-    "jimp": "^0.22.0"
+    "tesseract.js": "^5.0.0"
   },
   "devDependencies": {
     "electron-builder": "^24.0.0"
   },
-  "keywords": ["trading", "discipline", "automation", "finance", "electron", "macos"],
+  "keywords": [
+    "trading",
+    "discipline",
+    "automation",
+    "finance",
+    "electron",
+    "macos"
+  ],
   "author": "nottimlim",
   "license": "MIT",
   "repository": {
